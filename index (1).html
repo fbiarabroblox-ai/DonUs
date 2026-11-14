@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DonUs — баттл за игровой сетап</title>
+<style>
+  :root{
+    --bg:#0e1117; --card:#171b24; --text:#e8ecf3; --muted:#8b93a5;
+    --blue:#1fa3e8; --green:#5fd68a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{text-align:center;padding:28px 16px 8px}
+  h1{margin:0;font-size:2rem;letter-spacing:1px}
+  h1 span{color:var(--blue)}
+  .sub{color:var(--muted);margin:6px 0 0;font-size:.95rem}
+  .fake{display:inline-block;margin-top:10px;padding:4px 10px;border-radius:99px;background:#232837;color:var(--muted);font-size:.8rem}
+  main{display:grid;gap:16px;max-width:900px;margin:20px auto;padding:0 16px;grid-template-columns:1fr}
+  @media(min-width:720px){main{grid-template-columns:1fr 1fr}}
+  .card{background:var(--card);border-radius:18px;padding:20px;text-align:center;border:1px solid #232837}
+  .avatar{width:120px;height:120px;border-radius:50%;object-fit:cover;border:4px solid var(--c);background:#fff;display:block;margin:0 auto 10px}
+  .name{font-size:1.3rem;font-weight:700}
+  .total{font-size:2.2rem;font-weight:800;margin:8px 0 2px;color:var(--c)}
+  .goal{color:var(--muted);font-size:.85rem}
+  .bar{height:12px;background:#232837;border-radius:99px;overflow:hidden;margin:12px 0}
+  .bar>div{height:100%;width:0;background:var(--c);transition:width .6s}
+  .miles{list-style:none;padding:0;margin:12px 0;text-align:left;font-size:.9rem}
+  .miles li{display:flex;justify-content:space-between;padding:4px 0;color:var(--muted)}
+  .miles li.done{color:var(--text)}
+  .miles li.done::before{content:"✅ "}
+  .miles li:not(.done)::before{content:"⬜ "}
+  .miles li span:first-child{flex:1}
+  .amounts{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin:12px 0 8px}
+  .amounts button{background:#232837;color:var(--text);border:2px solid transparent;border-radius:10px;padding:8px 12px;font-weight:600;cursor:pointer}
+  .amounts button.on{border-color:var(--c);color:var(--c)}
+  .give{width:100%;padding:12px;border:0;border-radius:12px;background:var(--c);color:#0b0e14;font-size:1rem;font-weight:800;cursor:pointer}
+  .give:disabled{opacity:.45;cursor:not-allowed}
+  #msg{text-align:center;min-height:1.4em;margin:0 16px;color:var(--muted)}
+  footer{text-align:center;color:var(--muted);font-size:.8rem;padding:20px 16px 40px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Don<span>Us</span></h1>
+  <p class="sub">Баттл двух друзей — кто быстрее соберёт игровой ПК</p>
+  <span class="fake">Донаты виртуальные — реальные деньги не списываются</span>
+</header>
+
+<p id="msg"></p>
+<main id="cards"></main>
+
+<footer>DonUs · максимум 10€ за донат · один донат в час</footer>
+
+<script type="module">
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+
+/* ====== НАСТРОЙКИ ====== */
+const SUPABASE_URL = "https://tpgmymkbkemjwuulvkio.supabase.co";
+const SUPABASE_KEY = "sb_publishable_hOlKDmtzacvGrei47NPHDw_R5aed2DQ";
+const MAX_DONATE = 10;               // макс. один донат, €
+const COOLDOWN_MS = 60 * 60 * 1000;  // 1 час
+const GOAL = 2000;                   // цель на каждого, €
+
+const STREAMERS = [
+  { id:"nvipia",     name:"Nvipia",       avatar:"avatars/nvipia.png",     color:"#1fa3e8" },
+  { id:"aerostetic", name:"AerosteticPc", avatar:"avatars/aerostetic.png", color:"#5fd68a" },
+];
+const MILESTONES = [
+  { label:"Мышь",          at:50   },
+  { label:"Клавиатура",    at:200  },
+  { label:"Наушники",      at:400  },
+  { label:"Монитор",       at:900  },
+  { label:"Стол и кресло", at:1300 },
+  { label:"Игровой ПК",    at:2000 },
+];
+/* ======================= */
+
+const msg = document.getElementById("msg");
+const configured = !SUPABASE_URL.startsWith("PASTE");
+const sb = configured ? createClient(SUPABASE_URL, SUPABASE_KEY) : null;
+const fmt = n => new Intl.NumberFormat("ru-RU",{maximumFractionDigits:0}).format(n) + " €";
+const totals = {};
+let selected = {};
+STREAMERS.forEach(s => { selected[s.id] = 5; totals[s.id] = 0; });
+
+const cards = document.getElementById("cards");
+cards.innerHTML = STREAMERS.map(s => `
+  <section class="card" style="--c:${s.color}" id="c-${s.id}">
+    <img class="avatar" src="${s.avatar}" alt="${s.name}">
+    <div class="name">${s.name}</div>
+    <div class="total" data-total>0 €</div>
+    <div class="goal">цель ${fmt(GOAL)}</div>
+    <div class="bar"><div data-bar></div></div>
+    <ul class="miles">${MILESTONES.map(m =>
+      `<li data-at="${m.at}"><span>${m.label}</span><span>${fmt(m.at)}</span></li>`).join("")}</ul>
+    <div class="amounts">${[1,2,5,10].map(v =>
+      `<button data-v="${v}" class="${v===5?"on":""}">${v} €</button>`).join("")}</div>
+    <button class="give" data-give>Задонатить</button>
+  </section>`).join("");
+
+function render(){
+  STREAMERS.forEach(s => {
+    const el = document.getElementById("c-"+s.id);
+    const t = totals[s.id];
+    el.querySelector("[data-total]").textContent = fmt(t);
+    el.querySelector("[data-bar]").style.width = Math.min(100, t / GOAL * 100) + "%";
+    el.querySelectorAll(".miles li").forEach(li =>
+      li.classList.toggle("done", t >= +li.dataset.at));
+  });
+}
+
+async function load(){
+  if(!sb) return;
+  const { data, error } = await sb.from("totals").select("streamer, amount");
+  if(error){ msg.textContent = "Не удалось загрузить суммы"; return; }
+  data.forEach(r => { if(r.streamer in totals) totals[r.streamer] = Number(r.amount); });
+  render();
+}
+
+/* кулдаун: серверный — главный, localStorage — только для таймера на кнопке */
+const KEY = "donus_last";
+function left(){
+  const last = +localStorage.getItem(KEY) || 0;
+  return Math.max(0, last + COOLDOWN_MS - Date.now());
+}
+function tick(){
+  const l = left();
+  document.querySelectorAll("[data-give]").forEach(b => {
+    b.disabled = l > 0;
+    b.textContent = l > 0
+      ? `Следующий донат через ${Math.floor(l/60000)}:${String(Math.floor(l/1000)%60).padStart(2,"0")}`
+      : "Задонатить";
+  });
+}
+
+cards.addEventListener("click", async e => {
+  const card = e.target.closest(".card"); if(!card) return;
+  const id = card.id.slice(2);
+  const amt = e.target.closest("[data-v]");
+  if(amt){
+    selected[id] = +amt.dataset.v;
+    card.querySelectorAll("[data-v]").forEach(b => b.classList.toggle("on", b === amt));
+    return;
+  }
+  if(e.target.closest("[data-give]")){
+    if(!sb){ msg.textContent = "Сайт ещё не подключён к базе (см. README)"; return; }
+    const value = Math.min(MAX_DONATE, selected[id]);
+    const { data, error } = await sb.rpc("donate", { p_streamer:id, p_amount:value });
+    if(error || !data?.ok){
+      msg.textContent = data?.error === "cooldown"
+        ? "Донатить можно раз в час. Попробуй позже."
+        : "Ошибка доната, попробуй ещё раз.";
+      if(data?.error === "cooldown") localStorage.setItem(KEY, Date.now() - COOLDOWN_MS + (data.wait_ms || COOLDOWN_MS));
+      tick(); return;
+    }
+    localStorage.setItem(KEY, Date.now());
+    msg.textContent = `Спасибо! Ты задонатил ${fmt(value)} для ${STREAMERS.find(s=>s.id===id).name} 🎮`;
+    await load(); tick();
+  }
+});
+
+if(!configured) msg.textContent = "Подключи Supabase — инструкция в README.md";
+render(); load(); tick();
+setInterval(load, 10000);
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
